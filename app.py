@@ -75,8 +75,8 @@ def load_and_engineer():
     - Normalisation StandardScaler (fit sur L uniquement → évite data leakage)
     - Séparation L / U
     """
-    df = pd.read_csv("openaq_dakar_dataset.csv", parse_dates=["datetime"])
-
+    url = "https://raw.githubusercontent.com/TitansO/Projet-SelfTtaining_CoTraining/main/openaq_dakar_dataset.csv"
+df = pd.read_csv(url, parse_dates=["datetime"])
     # ── Encodage cyclique ──────────────────────────────────────────────────
     df["hour_sin"]   = np.sin(2 * np.pi * df["hour"]  / 24)
     df["hour_cos"]   = np.cos(2 * np.pi * df["hour"]  / 24)
