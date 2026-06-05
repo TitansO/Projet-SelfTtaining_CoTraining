@@ -2,7 +2,7 @@
 ============================================================
  Apprentissage Semi-Supervisé — Qualité de l'Air à Dakar
  Self-Training & Co-Training sur données OpenAQ (schéma réel)
- Projet — Data Science
+ Mémoire de fin d'études — Master Data Science
  v3 : anti-overfitting, dataset embarqué, test set temporel
 ============================================================
 
@@ -187,7 +187,7 @@ def generate_dataset() -> pd.DataFrame:
             else:                  aqi = 5
 
             rows.append({
-                "datetime":    dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "datetime":    dt,
                 "station_id":  sid,
                 "station_name": st_info["name"],
                 "month":       month,
@@ -234,6 +234,10 @@ def prepare_splits(_df: pd.DataFrame):
         (pas sur U ni sur Test → pas de data leakage)
     """
     df = _df.copy()
+
+    # ── Garantir que datetime est bien de type datetime64 ─────────────────
+    # (st.cache_data sérialise/désérialise et peut perdre le dtype datetime)
+    df["datetime"] = pd.to_datetime(df["datetime"]).dt.tz_localize(None)
 
     # ── Split temporel ────────────────────────────────────────────────────
     cutoff = pd.Timestamp("2023-10-01")
