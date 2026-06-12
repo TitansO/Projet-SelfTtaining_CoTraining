@@ -130,11 +130,11 @@ def load_dataset() -> tuple[pd.DataFrame, str]:
     )
     df["pm25_lag1h"] = (
         df.groupby("station_id")["pm25"]
-          .transform(lambda s: s.shift(1).fillna(method="bfill"))
+          .transform(lambda s: s.shift(1).bfill())
     )
     df["pm10_lag1h"] = (
         df.groupby("station_id")["pm10"]
-          .transform(lambda s: s.shift(1).fillna(method="bfill"))
+          .transform(lambda s: s.shift(1).bfill())
     )
     df["pm25_trend"] = df["pm25"] - df["pm25_lag1h"]
 
