@@ -573,25 +573,31 @@ def fig_view_independence(df_full):
     plt.tight_layout(); return fig
 
 
-def fig_predictability_analysis(df_full):
+def fig_predictability_analysis(df_train, df_test):
     """Montre que pm25 seul ne prédit plus parfaitement le nouveau label."""
-    from sklearn.tree import DecisionTreeClassifier
     from sklearn.preprocessing import StandardScaler as SS
 
-    cutoff = pd.Timestamp("2023-10-01")
-    df_tr = df_full[df_full["datetime"] < cutoff]
-    df_te = df_full[df_full["datetime"] >= cutoff]
-    y_te = df_te["aqi_label"].values
+    df_tr = df_train.copy()
+    df_te = df_test.copy()
+    y_te  = df_te["aqi_label"].values
+
+    # Vérifier que toutes les features sont présentes dans les deux splits
+    available = [f for f in ALL_FEATURES if f in df_tr.columns and f in df_te.columns]
+    vue_b_avail = [f for f in VUE_B if f in available]
 
     configs = [
-        ("pm25 seul",          ["pm25"]),
-        ("Polluants (Vue A)",  VUE_A),
-        ("Météo (Vue B)",      [f for f in VUE_B if f in df_full.columns]),
-        ("Polluants + Météo",  [f for f in ALL_FEATURES if f in df_full.columns]),
+        ("pm25 seul",         ["pm25"]),
+        ("Polluants (Vue A)", [f for f in VUE_A if f in available]),
+        ("Météo (Vue B)",     vue_b_avail),
+        ("Polluants + Météo", available),
     ]
     f1s = []
     for name, feats in configs:
-        sc_f = SS(); sc_f.fit(df_tr[feats].values)
+        if not feats:
+            f1s.append(0.0)
+            continue
+        sc_f = SS()
+        sc_f.fit(df_tr[feats].values)
         clf = RandomForestClassifier(n_estimators=50, max_depth=8,
                                       class_weight="balanced", random_state=42, n_jobs=-1)
         clf.fit(sc_f.transform(df_tr[feats].values), df_tr["aqi_label"].values)
@@ -884,7 +890,7 @@ with tab2:
         "pm25 seul → F1 ≈ 0.59. Il faut combiner polluants ET météo pour bien prédire."
     )
     with st.spinner("Calcul des scores de prédictibilité..."):
-        st.pyplot(fig_predictability_analysis(df_full), use_container_width=True)
+        st.pyplot(fig_predictability_analysis(df_full, df_test), use_container_width=True)
 
     st.markdown("---")
     st.markdown("#### ⏱ Validation Croisée Temporelle — Baseline honnête")
