@@ -106,7 +106,7 @@ def load_dataset() -> tuple[pd.DataFrame, str]:
     Fallback synthétique si indisponible.
     """
     try:
-        df = pd.read_csv(CSV_RAW_URL)
+        df = pd.read_csv("https://raw.githubusercontent.com/TitansO/Projet-SelfTtaining_CoTraining/main/openaq_dakar_dataset_v2.csv")
         source = "📡 Dataset GitHub v2 (météo + nouveau label AQI)"
     except Exception as e:
         st.warning(f"⚠️ Impossible de charger le CSV depuis GitHub ({e}). Génération de secours.")
