@@ -196,7 +196,7 @@ def load_and_prepare_data() -> tuple[pd.DataFrame, str]:
 
 @st.cache_data(show_spinner=False)
 def prepare_splits(_df: pd.DataFrame):
-    """Split + normalisation robuste + DATA AUGMENTATION SMOTE"""
+    """Split + normalisation robuste + DATA AUGMENTATION SMOTE (avec fallback)"""
     df = _df.copy()
     
     # Split 80/20 (temporel par ville)
@@ -206,11 +206,21 @@ def prepare_splits(_df: pd.DataFrame):
     for city in df["City"].unique():
         city_df = df[df["City"] == city].sort_values("Date")
         cutoff_idx = int(len(city_df) * 0.80)
-        df_train.append(city_df.iloc[:cutoff_idx])
-        df_test.append(city_df.iloc[cutoff_idx:])
+        if cutoff_idx > 0 and cutoff_idx < len(city_df):
+            df_train.append(city_df.iloc[:cutoff_idx])
+            df_test.append(city_df.iloc[cutoff_idx:])
+        else:
+            # Si une ville a trop peu de données, on met tout en train
+            df_train.append(city_df)
     
-    df_train = pd.concat(df_train).sort_values("Date").reset_index(drop=True)
-    df_test = pd.concat(df_test).sort_values("Date").reset_index(drop=True)
+    df_train = pd.concat(df_train).sort_values("Date").reset_index(drop=True) if df_train else pd.DataFrame()
+    df_test = pd.concat(df_test).sort_values("Date").reset_index(drop=True) if df_test else pd.DataFrame()
+    
+    # Si pas de test, créer un petit split
+    if len(df_test) == 0:
+        cutoff_idx = int(len(df) * 0.80)
+        df_train = df.iloc[:cutoff_idx].copy()
+        df_test = df.iloc[cutoff_idx:].copy()
 
     # Features disponibles
     ALL_FEATURES = [f for f in (VUE_A + VUE_B + [
@@ -235,23 +245,35 @@ def prepare_splits(_df: pd.DataFrame):
     X_L_original = sc(df_L)
     y_L_original = df_L["aqi_label"].values
     
-    # ========== DATA AUGMENTATION AVEC SMOTE ==========
+    # ========== DATA AUGMENTATION SÉCURISÉE ==========
     unique_classes, class_counts = np.unique(y_L_original, return_counts=True)
     majority_count = max(class_counts)
     
     st.info(f"🔄 Data Augmentation: Équilibrage des classes vers {majority_count} échantillons")
     
-    st.write("**Distribution avant SMOTE:**")
+    st.write("**Distribution avant augmentation:**")
     for cls, count in zip(unique_classes, class_counts):
         st.write(f"  - Classe {cls} ({AQI_NAMES.get(cls, (str(cls), ''))[0]}): {count} échantillons")
     
+    # Vérifier si SMOTE peut être appliqué
     min_samples_per_class = min(class_counts)
+    n_classes = len(unique_classes)
     
-    if min_samples_per_class >= 2 and len(unique_classes) >= 2:
-        smote = SMOTE(random_state=42)
-        X_L_augmented, y_L_augmented = smote.fit_resample(X_L_original, y_L_original)
-    else:
-        st.warning(f"⚠️ Classe avec seulement {min_samples_per_class} échantillon(s). Utilisation d'un sur-échantillonnage simple.")
+    # SMOTE nécessite au moins n_neighbors (par défaut 5) échantillons par classe
+    can_use_smote = min_samples_per_class >= 6 and n_classes >= 2
+    
+    if can_use_smote:
+        try:
+            smote = SMOTE(random_state=42, k_neighbors=min(5, min_samples_per_class - 1))
+            X_L_augmented, y_L_augmented = smote.fit_resample(X_L_original, y_L_original)
+            st.success("✅ SMOTE appliqué avec succès")
+        except Exception as e:
+            st.warning(f"⚠️ SMOTE a échoué: {str(e)[:100]}. Utilisation de l'alternative.")
+            can_use_smote = False
+    
+    if not can_use_smote:
+        st.warning(f"⚠️ SMOTE non applicable (min_samples={min_samples_per_class}). Utilisation d'un sur-échantillonnage simple avec bruit.")
+        
         X_list = [X_L_original]
         y_list = [y_L_original]
         
@@ -259,13 +281,17 @@ def prepare_splits(_df: pd.DataFrame):
             mask = y_L_original == cls
             X_class = X_L_original[mask]
             y_class = y_L_original[mask]
+            current_count = len(X_class)
             
-            if len(X_class) < majority_count and len(X_class) > 0:
-                n_to_add = majority_count - len(X_class)
-                indices = np.random.choice(len(X_class), n_to_add, replace=True)
+            if current_count < majority_count and current_count > 0:
+                n_to_add = majority_count - current_count
+                # Sur-échantillonnage avec remplacement
+                indices = np.random.choice(current_count, n_to_add, replace=True)
                 X_dup = X_class[indices]
                 y_dup = np.array([cls] * n_to_add)
-                noise = np.random.normal(0, 0.01, X_dup.shape)
+                # Ajouter un peu de bruit pour plus de variété
+                noise_scale = 0.01 * (1 + np.random.random())
+                noise = np.random.normal(0, noise_scale, X_dup.shape)
                 X_dup = X_dup + noise
                 X_list.append(X_dup)
                 y_list.append(y_dup)
@@ -273,16 +299,16 @@ def prepare_splits(_df: pd.DataFrame):
         X_L_augmented = np.vstack(X_list)
         y_L_augmented = np.concatenate(y_list)
     
-    st.write("**Distribution après SMOTE:**")
+    st.write("**Distribution après augmentation:**")
     unique_classes_aug, class_counts_aug = np.unique(y_L_augmented, return_counts=True)
     for cls, count in zip(unique_classes_aug, class_counts_aug):
         st.write(f"  - Classe {cls} ({AQI_NAMES.get(cls, (str(cls), ''))[0]}): {count} échantillons")
     
     st.success(f"✅ Data Augmentation terminée: {len(X_L_original)} → {len(X_L_augmented)} échantillons")
 
-    X_U    = sc(df_U)
-    X_test = sc(df_test)
-    y_test = df_test["aqi_label"].values
+    X_U = sc(df_U) if len(df_U) > 0 else np.array([])
+    X_test = sc(df_test) if len(df_test) > 0 else np.array([])
+    y_test = df_test["aqi_label"].values if len(df_test) > 0 else np.array([])
 
     # Indices des vues
     va_idx = [ALL_FEATURES.index(f) for f in VUE_A if f in ALL_FEATURES]
@@ -301,10 +327,10 @@ def prepare_splits(_df: pd.DataFrame):
         "augmentation_info": {
             "before_size": len(X_L_original),
             "after_size": len(X_L_augmented),
-            "majority_count": majority_count
+            "majority_count": majority_count,
+            "smote_used": can_use_smote
         }
     }
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 3. CLASSIFIEURS OPTIMISÉS
