@@ -88,7 +88,7 @@ def load_dataset() -> tuple[pd.DataFrame, str]:
     Données réelles uniquement — pas de fallback synthétique.
     """
     try:
-        df = pd.read_csv("https://raw.githubusercontent.com/TitansO/Projet-SelfTtaining_CoTraining/main/air_quality_historical.csv")
+        df = pd.read_csv("/mnt/user-data/uploads/air_quality_historical.csv")
         source = "📊 Dataset réel (air_quality_historical.csv)"
     except Exception as e:
         st.error(f"❌ Impossible de charger le CSV : {e}")
@@ -102,10 +102,10 @@ def load_dataset() -> tuple[pd.DataFrame, str]:
     pollutants = ["pm2_5", "pm10", "nitrogen_dioxide", "ozone", "carbon_monoxide"]
     df = df.dropna(subset=pollutants, how="all")
     
-    # Remplir les valeurs manquantes par forward fill puis backward fill
+    # Remplir les valeurs manquantes par forward fill puis backward fill (syntaxe pandas >= 2.0)
     for col in df.columns:
         if col != "date":
-            df[col] = df[col].fillna(method='ffill').fillna(method='bfill')
+            df[col] = df[col].ffill().bfill()
     
     # Créer les features temporelles
     df["hour"] = 12  # Données journalières — on fixe à midi
