@@ -2,6 +2,7 @@
 ============================================================
 Apprentissage Semi-Supervisé — Qualité de l'Air à Dakar
 OPTIMISÉ POUR HAUTES PERFORMANCES (80%+)
+AVEC DATA AUGMENTATION POUR ÉQUILIBRER LES CLASSES
 
 Améliorations :
 ✅ Label AQI direct (us_aqi) + discrétisation optimale
@@ -11,6 +12,7 @@ Améliorations :
 ✅ Preprocessing robuste (KNN imputation)
 ✅ Class weighting + stratification
 ✅ Validation croisée temporelle strict
+✅ DATA AUGMENTATION (SMOTE) pour équilibrer les classes
 ============================================================
 """
 
@@ -31,6 +33,8 @@ from sklearn.metrics import (
     f1_score, precision_score, recall_score,
     classification_report, confusion_matrix, roc_auc_score
 )
+from imblearn.over_sampling import SMOTE
+
 try:
     import xgboost as xgb
     HAS_XGBOOST = True
@@ -177,12 +181,12 @@ def load_and_prepare_data() -> tuple[pd.DataFrame, str]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 2. PRÉPARATION SPLITS OPTIMISÉE
+# 2. PRÉPARATION SPLITS OPTIMISÉE AVEC DATA AUGMENTATION
 # ═══════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(show_spinner=False)
 def prepare_splits(_df: pd.DataFrame):
-    """Split temporel + normalisation robuste"""
+    """Split temporel + normalisation robuste + DATA AUGMENTATION SMOTE"""
     df = _df.copy()
     
     # Split 80/20
@@ -209,9 +213,41 @@ def prepare_splits(_df: pd.DataFrame):
     def sc(frame):
         return scaler.transform(frame[ALL_FEATURES].values)
 
-    X_L    = sc(df_L);    y_L    = df_L["aqi_label"].values
+    X_L_original = sc(df_L)
+    y_L_original = df_L["aqi_label"].values
+    
+    # ========== DATA AUGMENTATION AVEC SMOTE ==========
+    # Identifier la classe majoritaire (Modéré = classe 1)
+    unique_classes, class_counts = np.unique(y_L_original, return_counts=True)
+    majority_class = unique_classes[np.argmax(class_counts)]
+    majority_count = max(class_counts)
+    
+    # Appliquer SMOTE pour équilibrer toutes les classes à la taille de la classe majoritaire
+    st.info(f"🔄 Data Augmentation: Équilibrage des classes vers {majority_count} échantillons")
+    
+    # Afficher la distribution avant SMOTE
+    st.write("**Distribution avant SMOTE:**")
+    for cls, count in zip(unique_classes, class_counts):
+        st.write(f"  - Classe {cls} ({AQI_NAMES.get(cls, (str(cls), ''))[0]}): {count} échantillons")
+    
+    # Appliquer SMOTE avec sampling_strategy = 'auto' ou échantillonnage personnalisé
+    # On veut que toutes les classes aient le même nombre d'échantillons que la classe majoritaire
+    sampling_strategy = {cls: majority_count for cls in unique_classes}
+    
+    smote = SMOTE(sampling_strategy=sampling_strategy, random_state=42, k_neighbors=min(3, min(class_counts)-1))
+    X_L_augmented, y_L_augmented = smote.fit_resample(X_L_original, y_L_original)
+    
+    # Afficher la distribution après SMOTE
+    st.write("**Distribution après SMOTE:**")
+    unique_classes_aug, class_counts_aug = np.unique(y_L_augmented, return_counts=True)
+    for cls, count in zip(unique_classes_aug, class_counts_aug):
+        st.write(f"  - Classe {cls} ({AQI_NAMES.get(cls, (str(cls), ''))[0]}): {count} échantillons")
+    
+    st.success(f"✅ Data Augmentation terminée: {len(X_L_original)} → {len(X_L_augmented)} échantillons")
+
     X_U    = sc(df_U)
-    X_test = sc(df_test); y_test = df_test["aqi_label"].values
+    X_test = sc(df_test)
+    y_test = df_test["aqi_label"].values
 
     # Indices des vues
     va_idx = [ALL_FEATURES.index(f) for f in VUE_A if f in ALL_FEATURES]
@@ -220,12 +256,19 @@ def prepare_splits(_df: pd.DataFrame):
     return {
         "df_full": df_train, "df_test": df_test,
         "df_L": df_L, "df_U": df_U,
-        "X_L": X_L, "y_L": y_L,
+        "X_L": X_L_augmented, "y_L": y_L_augmented,
+        "X_L_original": X_L_original, "y_L_original": y_L_original,
         "X_U": X_U,
         "X_test": X_test, "y_test": y_test,
         "va_idx": va_idx, "vb_idx": vb_idx,
         "scaler": scaler,
         "ALL_FEATURES": ALL_FEATURES,
+        "augmentation_info": {
+            "before_size": len(X_L_original),
+            "after_size": len(X_L_augmented),
+            "majority_class": majority_class,
+            "majority_count": majority_count
+        }
     }
 
 
@@ -500,10 +543,34 @@ def fig_compare(results_dict):
     
     ax.set_xticks(x); ax.set_xticklabels(methods, fontsize=10, fontweight="bold")
     ax.set_ylim(0, 1.05); ax.set_ylabel("Score")
-    ax.set_title("Comparaison — OPTIMISÉ 80%+", fontsize=13, fontweight="bold")
+    ax.set_title("Comparaison — OPTIMISÉ 80%+ AVEC DATA AUGMENTATION", fontsize=13, fontweight="bold")
     ax.legend(fontsize=10); ax.grid(axis="y", alpha=0.3)
     
     plt.tight_layout(); return fig
+
+
+def fig_class_distribution_before_after(before_counts, after_counts):
+    """Affiche la distribution des classes avant et après augmentation"""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5)); _style(fig)
+    
+    classes = list(before_counts.keys())
+    before_values = list(before_counts.values())
+    after_values = [after_counts.get(cls, 0) for cls in classes]
+    
+    bars1 = ax1.bar(classes, before_values, color=[AQI_NAMES.get(c, ("", PALETTE["purple"]))[1] for c in classes])
+    ax1.set_title("Distribution avant SMOTE", fontsize=12, fontweight="bold")
+    ax1.set_xlabel("Classe AQI"); ax1.set_ylabel("Nombre d'échantillons")
+    for bar, val in zip(bars1, before_values):
+        ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2, str(val), ha="center", fontsize=10)
+    
+    bars2 = ax2.bar(classes, after_values, color=[AQI_NAMES.get(c, ("", PALETTE["purple"]))[1] for c in classes])
+    ax2.set_title("Distribution après SMOTE", fontsize=12, fontweight="bold")
+    ax2.set_xlabel("Classe AQI"); ax2.set_ylabel("Nombre d'échantillons")
+    for bar, val in zip(bars2, after_values):
+        ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2, str(val), ha="center", fontsize=10)
+    
+    plt.tight_layout()
+    return fig
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -520,7 +587,8 @@ st.sidebar.markdown(
     "🔧 Feature engineering avancé\n"
     "⚡ XGBoost + Ensemble\n"
     "📊 KNN Imputation\n"
-    "🎲 Hyper-paramètres optimisés")
+    "🎲 Hyper-paramètres optimisés\n"
+    "🔄 **DATA AUGMENTATION (SMOTE)**")
 st.sidebar.markdown("---")
 
 algo_choice  = st.sidebar.selectbox("🔬 Algorithme", ["Self-Training", "Co-Training"])
@@ -539,7 +607,7 @@ model_map = {"XGBoost": "xgb", "GradientBoosting": "gb", "RandomForest": "rf"}
 with st.spinner("⏳ Chargement & preprocessing avancé…"):
     df_raw, data_source = load_and_prepare_data()
 
-with st.spinner("⚙️ Préparation des splits…"):
+with st.spinner("⚙️ Préparation des splits avec data augmentation…"):
     data = prepare_splits(df_raw)
 
 df_full  = data["df_full"]
@@ -548,6 +616,7 @@ X_U = data["X_U"]
 X_test, y_test = data["X_test"], data["y_test"]
 va_idx, vb_idx = data["va_idx"], data["vb_idx"]
 ALL_FEATURES = data["ALL_FEATURES"]
+aug_info = data["augmentation_info"]
 
 # HEADER
 st.markdown(f"""
@@ -555,7 +624,7 @@ st.markdown(f"""
             padding:28px 32px;border-radius:12px;margin-bottom:20px'>
   <h1 style='color:white;margin:0'>🚀 SSL — Optimisé pour 80%+ Performance</h1>
   <p style='color:#B2D8D4;margin:8px 0 4px 0'>
-    Self-Training & Co-Training · Features engineered · XGBoost/Ensemble
+    Self-Training & Co-Training · Features engineered · XGBoost/Ensemble · SMOTE Augmentation
   </p>
   <span style='background:#27AE60;color:white;padding:4px 12px;border-radius:20px;
                font-size:0.85rem;font-weight:bold'>{data_source}</span>
@@ -563,8 +632,8 @@ st.markdown(f"""
 
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("📦 Train", f"{len(df_full):,}")
-c2.metric("🏷 L", f"{(y_L>=0).sum():,}", f"{(y_L>=0).sum()/len(y_L)*100:.1f}%")
-c3.metric("🔓 U", f"{len(X_U):,}")
+c2.metric("🏷 L (avant augmentation)", f"{aug_info['before_size']:,}")
+c3.metric("🏷 L (après augmentation)", f"{aug_info['after_size']:,}", f"+{aug_info['after_size']-aug_info['before_size']}")
 c4.metric("🧪 Test", f"{len(X_test):,}")
 c5.metric("🔢 Features", f"{len(ALL_FEATURES)}")
 st.markdown("---")
@@ -577,15 +646,41 @@ with tab1:
     st.info(f"**{len(df_raw):,}** observations | **{len(ALL_FEATURES)}** features | "
             f"**{len(df_raw['aqi_label'].unique())}** classes AQI")
     
-    fig, ax = plt.subplots(figsize=(12, 4)); _style(fig)
-    counts = pd.Series(y_L).value_counts().sort_index()
-    ax.bar([AQI_NAMES.get(i, (str(i), PALETTE["purple"]))[0] for i in counts.index], 
-           counts.values, color=[AQI_NAMES.get(i, ("", PALETTE["purple"]))[1] for i in counts.index],
-           edgecolor="white")
-    ax.set_title("Distribution AQI — L (labellisé)", fontsize=11, fontweight="bold")
-    ax.set_ylabel("Observations"); ax.grid(axis="y", alpha=0.3)
-    plt.tight_layout()
-    st.pyplot(fig, use_container_width=True)
+    # Distribution avant/après SMOTE
+    st.markdown("### 🔄 Data Augmentation SMOTE")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        fig, ax = plt.subplots(figsize=(8, 4)); _style(fig)
+        counts_before = pd.Series(data["y_L_original"]).value_counts().sort_index()
+        bars = ax.bar([AQI_NAMES.get(i, (str(i), ""))[0] for i in counts_before.index], 
+                      counts_before.values, 
+                      color=[AQI_NAMES.get(i, ("", PALETTE["purple"]))[1] for i in counts_before.index],
+                      edgecolor="white")
+        ax.set_title("Distribution AQI — AVANT SMOTE (L)", fontsize=11, fontweight="bold")
+        ax.set_ylabel("Observations")
+        for bar, val in zip(bars, counts_before.values):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1, str(val), ha="center", fontsize=10)
+        ax.grid(axis="y", alpha=0.3)
+        plt.tight_layout()
+        st.pyplot(fig, use_container_width=True)
+    
+    with col2:
+        fig, ax = plt.subplots(figsize=(8, 4)); _style(fig)
+        counts_after = pd.Series(y_L).value_counts().sort_index()
+        bars = ax.bar([AQI_NAMES.get(i, (str(i), ""))[0] for i in counts_after.index], 
+                      counts_after.values,
+                      color=[AQI_NAMES.get(i, ("", PALETTE["purple"]))[1] for i in counts_after.index],
+                      edgecolor="white")
+        ax.set_title("Distribution AQI — APRÈS SMOTE (L)", fontsize=11, fontweight="bold")
+        ax.set_ylabel("Observations")
+        for bar, val in zip(bars, counts_after.values):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1, str(val), ha="center", fontsize=10)
+        ax.grid(axis="y", alpha=0.3)
+        plt.tight_layout()
+        st.pyplot(fig, use_container_width=True)
+    
+    st.success(f"📊 Augmentation terminée : {aug_info['before_size']} → {aug_info['after_size']} échantillons")
 
 with tab2:
     st.markdown(f"### 🤖 {algo_choice} — {model_type}")
@@ -636,7 +731,7 @@ with tab2:
                 return out
             y_pred = cls[(0.6*_al(cA, pA) + 0.4*_al(cB, pB)).argmax(axis=1)]
         
-        st.pyplot(fig_confusion(y_test, y_pred, f"{algo_choice}"), use_container_width=True)
+        st.pyplot(fig_confusion(y_test, y_pred, f"{algo_choice} (avec SMOTE)"), use_container_width=True)
         
         if "results" not in st.session_state:
             st.session_state["results"] = {}
