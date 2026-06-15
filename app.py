@@ -217,25 +217,56 @@ def prepare_splits(_df: pd.DataFrame):
     y_L_original = df_L["aqi_label"].values
     
     # ========== DATA AUGMENTATION AVEC SMOTE ==========
-    # Identifier la classe majoritaire (Modéré = classe 1)
+    # Vérifier qu'on a assez d'échantillons par classe pour SMOTE
     unique_classes, class_counts = np.unique(y_L_original, return_counts=True)
     majority_class = unique_classes[np.argmax(class_counts)]
     majority_count = max(class_counts)
     
-    # Appliquer SMOTE pour équilibrer toutes les classes à la taille de la classe majoritaire
+    # Afficher la distribution avant SMOTE
     st.info(f"🔄 Data Augmentation: Équilibrage des classes vers {majority_count} échantillons")
     
-    # Afficher la distribution avant SMOTE
+    # Distribution avant
     st.write("**Distribution avant SMOTE:**")
     for cls, count in zip(unique_classes, class_counts):
         st.write(f"  - Classe {cls} ({AQI_NAMES.get(cls, (str(cls), ''))[0]}): {count} échantillons")
     
-    # Appliquer SMOTE avec sampling_strategy = 'auto' ou échantillonnage personnalisé
-    # On veut que toutes les classes aient le même nombre d'échantillons que la classe majoritaire
-    sampling_strategy = {cls: majority_count for cls in unique_classes}
+    # Appliquer SMOTE uniquement si toutes les classes ont au moins 2 échantillons
+    # (k_neighbors nécessite au moins 2 samples par classe)
+    min_samples_per_class = min(class_counts)
     
-    smote = SMOTE(sampling_strategy=sampling_strategy, random_state=42, k_neighbors=min(3, min(class_counts)-1))
-    X_L_augmented, y_L_augmented = smote.fit_resample(X_L_original, y_L_original)
+    if min_samples_per_class >= 2:
+        # SMOTE standard avec échantillonnage automatique
+        smote = SMOTE(random_state=42)
+        X_L_augmented, y_L_augmented = smote.fit_resample(X_L_original, y_L_original)
+    else:
+        st.warning(f"⚠️ Classe avec seulement {min_samples_per_class} échantillon(s). Utilisation d'un sur-échantillonnage simple.")
+        # Sur-échantillonnage simple avec duplication et bruit
+        from sklearn.utils import resample
+        
+        X_list = [X_L_original]
+        y_list = [y_L_original]
+        
+        for cls in unique_classes:
+            mask = y_L_original == cls
+            X_class = X_L_original[mask]
+            y_class = y_L_original[mask]
+            
+            if len(X_class) < majority_count and len(X_class) > 0:
+                n_to_add = majority_count - len(X_class)
+                # Duplication avec remplacement
+                indices = np.random.choice(len(X_class), n_to_add, replace=True)
+                X_dup = X_class[indices]
+                y_dup = np.array([cls] * n_to_add)
+                
+                # Ajouter un peu de bruit
+                noise = np.random.normal(0, 0.01, X_dup.shape)
+                X_dup = X_dup + noise
+                
+                X_list.append(X_dup)
+                y_list.append(y_dup)
+        
+        X_L_augmented = np.vstack(X_list)
+        y_L_augmented = np.concatenate(y_list)
     
     # Afficher la distribution après SMOTE
     st.write("**Distribution après SMOTE:**")
@@ -270,7 +301,6 @@ def prepare_splits(_df: pd.DataFrame):
             "majority_count": majority_count
         }
     }
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 3. CLASSIFIEURS OPTIMISÉS
