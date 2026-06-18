@@ -85,13 +85,13 @@ def calculate_us_aqi(row):
         if pm25 <= 12:
             aqi_values.append(((50 - 0) / (12.0 - 0.0)) * (pm25 - 0.0) + 0)
         elif pm25 <= 35.4:
-            aqi_values.append((50, 100) * ((pm25 - 12) / 23.4) + 50)
+            aqi_values.append(((100 - 50) / (35.4 - 12.0)) * (pm25 - 12.0) + 50)
         elif pm25 <= 55.4:
-            aqi_values.append((100, 150) * ((pm25 - 35.4) / 20) + 100)
+            aqi_values.append(((150 - 100) / (55.4 - 35.4)) * (pm25 - 35.4) + 100)
         elif pm25 <= 150.4:
-            aqi_values.append((150, 200) * ((pm25 - 55.4) / 95) + 150)
+            aqi_values.append(((200 - 150) / (150.4 - 55.4)) * (pm25 - 55.4) + 150)
         elif pm25 <= 250.4:
-            aqi_values.append((200, 300) * ((pm25 - 150.4) / 100) + 200)
+            aqi_values.append(((300 - 200) / (250.4 - 150.4)) * (pm25 - 150.4) + 200)
         else:
             aqi_values.append(min(500, 300 + ((pm25 - 250.4) / 100) * 200))
     
@@ -99,15 +99,15 @@ def calculate_us_aqi(row):
     if pd.notna(row['pm10']):
         pm10 = row['pm10']
         if pm10 <= 54:
-            aqi_values.append((0, 50) * (pm10 / 54))
+            aqi_values.append(((50 - 0) / (54.0 - 0.0)) * (pm10 - 0.0) + 0)
         elif pm10 <= 154:
-            aqi_values.append((50, 100) * ((pm10 - 54) / 100) + 50)
+            aqi_values.append(((100 - 50) / (154.0 - 54.0)) * (pm10 - 54.0) + 50)
         elif pm10 <= 254:
-            aqi_values.append((100, 150) * ((pm10 - 154) / 100) + 100)
+            aqi_values.append(((150 - 100) / (254.0 - 154.0)) * (pm10 - 154.0) + 100)
         elif pm10 <= 354:
-            aqi_values.append((150, 200) * ((pm10 - 254) / 100) + 150)
+            aqi_values.append(((200 - 150) / (354.0 - 254.0)) * (pm10 - 254.0) + 150)
         elif pm10 <= 424:
-            aqi_values.append((200, 300) * ((pm10 - 354) / 70) + 200)
+            aqi_values.append(((300 - 200) / (424.0 - 354.0)) * (pm10 - 354.0) + 200)
         else:
             aqi_values.append(min(500, 300 + ((pm10 - 424) / 100) * 200))
     
@@ -115,20 +115,19 @@ def calculate_us_aqi(row):
     if pd.notna(row['nitrogen_dioxide']):
         no2 = row['nitrogen_dioxide']
         if no2 <= 53:
-            aqi_values.append((0, 50) * (no2 / 53))
+            aqi_values.append(((50 - 0) / (53.0 - 0.0)) * (no2 - 0.0) + 0)
         elif no2 <= 100:
-            aqi_values.append((50, 100) * ((no2 - 53) / 47) + 50)
+            aqi_values.append(((100 - 50) / (100.0 - 53.0)) * (no2 - 53.0) + 50)
         elif no2 <= 360:
-            aqi_values.append((100, 150) * ((no2 - 100) / 260) + 100)
+            aqi_values.append(((150 - 100) / (360.0 - 100.0)) * (no2 - 100.0) + 100)
         elif no2 <= 649:
-            aqi_values.append((150, 200) * ((no2 - 360) / 289) + 150)
+            aqi_values.append(((200 - 150) / (649.0 - 360.0)) * (no2 - 360.0) + 150)
         elif no2 <= 1249:
-            aqi_values.append((200, 300) * ((no2 - 649) / 600) + 200)
+            aqi_values.append(((300 - 200) / (1249.0 - 649.0)) * (no2 - 649.0) + 200)
         else:
             aqi_values.append(min(500, 300 + ((no2 - 1249) / 100) * 200))
     
     return max(aqi_values) if aqi_values else np.nan
-
 
 # ════════════════════════════════════════════════════════════════════════════════
 # 🔧 CONFIGURATION STREAMLIT
