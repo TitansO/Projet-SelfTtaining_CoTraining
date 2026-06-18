@@ -195,19 +195,36 @@ def load_and_prepare_data():
     try:
         # Essayer GitHub d'abord
         url = "https://raw.githubusercontent.com/TitansO/Projet-SelfTtaining_CoTraining/main/beijing_air_quality_combined.csv"
-        df = pd.read_csv(url)
+        df = pd.read_csv(url, low_memory=False)
         source = "🌐 GitHub (Beijing PRSA 2013-2017)"
     except:
         try:
-            df = pd.read_csv("beijing_air_quality_combined.csv")
+            df = pd.read_csv("beijing_air_quality_combined.csv", low_memory=False)
             source = "💾 Local (Beijing PRSA)"
         except Exception as e:
             st.error(f"❌ Impossible de charger les données: {e}")
             st.stop()
     
-    # Conversion date
-    df["date"] = pd.to_datetime(df["date"])
+    # ─── CORRECTION ICI ──────────────────────────────────────────────────────
+    # 1. Supprimer les lignes d'en-tête dupliquées (si les fichiers ont été fusionnés bruts)
+    if "year" in df.columns:
+        df = df[df["year"] != "year"]
+        
+    # 2. Convertir les colonnes temporelles en valeurs numériques
+    time_cols = ["year", "month", "day", "hour"]
+    for col in time_cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+    # Supprimer les lignes où le temps n'a pas pu être converti
+    df = df.dropna(subset=time_cols)
+    
+    # 3. Créer proprement la colonne 'date' à partir des composants
+    df["date"] = pd.to_datetime(df[time_cols])
+    # ─────────────────────────────────────────────────────────────────────────
+
     df = df.sort_values("date").reset_index(drop=True)
+    
+    # ... (le reste de votre fonction Preprocessing Robuste reste identique)
     
     # ═══════ PREPROCESSING ROBUSTE ═══════
     
