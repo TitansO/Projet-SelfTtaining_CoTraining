@@ -1,21 +1,7 @@
-# ================================================================
-# requirements.txt — Apprentissage Semi-Supervisé Qualité Air Dakar
-# Python 3.10+
-# ================================================================
-
-# Web application
-streamlit>=1.32.0
-imbalanced-learn>=0.12.0
-# Data manipulation
-pandas>=2.1.0
-numpy>=1.26.0
-
-# Machine learning
-scikit-learn>=1.4.0
-
-# Visualisation
-matplotlib>=3.8.0
-seaborn>=0.13.0
-
-# Utilitaires
-python-dateutil>=2.8.2
+streamlit>=1.36.0
+pandas>=2.2.0
+numpy>=1.26.4
+scikit-learn>=1.4.1
+matplotlib>=3.8.3
+seaborn>=0.13.1
+xgboost>=2.0.3
