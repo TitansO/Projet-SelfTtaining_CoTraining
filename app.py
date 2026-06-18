@@ -83,7 +83,7 @@ def calculate_us_aqi(row):
     if pd.notna(row['pm2_5']):
         pm25 = row['pm2_5']
         if pm25 <= 12:
-            aqi_values.append((0, 50) * (pm25 / 12))
+            aqi_values.append(((50 - 0) / (12.0 - 0.0)) * (pm25 - 0.0) + 0)
         elif pm25 <= 35.4:
             aqi_values.append((50, 100) * ((pm25 - 12) / 23.4) + 50)
         elif pm25 <= 55.4:
