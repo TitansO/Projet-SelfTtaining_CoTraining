@@ -194,7 +194,7 @@ def load_and_prepare_data():
     """Chargement + preprocessing avancé avec AQI calcul"""
     try:
         # Essayer GitHub d'abord
-        url = "https://raw.githubusercontent.com/TitansO/Projet-SelfTtaining_CoTraining/main/beijing+multi+site+air+quality+data.zip"
+        url = "https://raw.githubusercontent.com/TitansO/Projet-SelfTtaining_CoTraining/main/beijing_air_quality_combined.csv"
         df = pd.read_csv(url)
         source = "🌐 GitHub (Beijing PRSA 2013-2017)"
     except:
