@@ -205,26 +205,68 @@ def load_and_prepare_data():
             st.error(f"❌ Impossible de charger les données: {e}")
             st.stop()
     
-    # ─── CORRECTION ICI ──────────────────────────────────────────────────────
-    # 1. Supprimer les lignes d'en-tête dupliquées (si les fichiers ont été fusionnés bruts)
+    # ─── 1. NETTOYAGE DES EN-TÊTES PARASITES ─────────────────────────────────
     if "year" in df.columns:
         df = df[df["year"] != "year"]
+    elif "YEAR" in df.columns or "Year" in df.columns:
+        # Sécurité au cas où la casse varie d'un fichier à l'endos
+        df.columns = df.columns.str.lower()
+        df = df[df["year"] != "year"]
+
+    # ─── 2. RE-MAPPING ET NORMALISATION DES COLONNES (CORRECTION CRUCIALE) ────
+    # On harmonise la casse de toutes les colonnes existantes en minuscules
+    df.columns = df.columns.str.lower()
+    
+    # Dictionnaire de correspondance pour aligner le fichier PRSA avec votre code
+    rename_dict = {
+        "pm2.5": "pm2_5",
+        "so2": "sulphur_dioxide",
+        "no2": "nitrogen_dioxide",
+        "co": "carbon_monoxide",
+        "o3": "ozone",
+        "temp": "temperature",
+        "pres": "pressure",
+        "dewp": "dew_point",
+        "rain": "rain",
+        "wspm": "wind_speed"
+    }
+    df = df.rename(columns=rename_dict)
         
-    # 2. Convertir les colonnes temporelles en valeurs numériques
+    # ─── 3. CONVERSION ET CRÉATION DE LA COLONNE DATE ────────────────────────
     time_cols = ["year", "month", "day", "hour"]
     for col in time_cols:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
         
-    # Supprimer les lignes où le temps n'a pas pu être converti
     df = df.dropna(subset=time_cols)
-    
-    # 3. Créer proprement la colonne 'date' à partir des composants
     df["date"] = pd.to_datetime(df[time_cols])
-    # ─────────────────────────────────────────────────────────────────────────
-
     df = df.sort_values("date").reset_index(drop=True)
     
-    # ... (le reste de votre fonction Preprocessing Robuste reste identique)
+    # ─── 4. SUITE DU PREPROCESSING ROBUSTE (Reste inchangé) ──────────────────
+    pollutants = ["pm2_5", "pm10", "nitrogen_dioxide", "ozone", "sulphur_dioxide", "carbon_monoxide"]
+    
+    # KNN Imputation pour les polluants
+    imputer = KNNImputer(n_neighbors=5)
+    for col in pollutants:
+        if col in df.columns:
+            # Remplacement des chaînes "NA" ou "NaN" textuelles par de vrais np.nan avant imputation
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            df[col] = imputer.fit_transform(df[[col]])
+    
+    # S'assurer que toutes les colonnes météo sont bien au format numérique
+    weather_cols = ["temperature", "pressure", "dew_point", "rain", "wind_speed"]
+    for col in weather_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # Forward/backward fill pour colonnes météo
+    for col in weather_cols:
+        if col in df.columns:
+            df[col] = df[col].ffill().bfill()
+    
+    # Remplir et nettoyer
+    df = df.dropna(subset=pollutants)
+    df = df.fillna(df.mean(numeric_only=True))
     
     # ═══════ PREPROCESSING ROBUSTE ═══════
     
