@@ -1,7 +1,6 @@
 """
 ============================================================
 Apprentissage Semi-Supervisé — Qualité de l'Air à Dakar
-OPTIMISÉ POUR HAUTES PERFORMANCES (85%+)
 
 Améliorations v2 :
 ✅ Imputation multi-stratégie (KNN + interpolation)
@@ -14,6 +13,12 @@ Améliorations v2 :
 
 Améliorations v3 :
 ✅ % de labels connus (label_ratio) ajustable via slider sidebar (4% -> 20%)
+
+Améliorations v4 :
+✅ AQI discrétisé en 4 classes (compromis granularité/F1, vs. 6 avant)
+✅ Validation honnête séparée du TEST pour piloter le SSL (early stopping /
+   sélection de la "meilleure" itération) — le TEST n'est plus utilisé que
+   pour le rapport final, jamais pour choisir un modèle.
 ============================================================
 """
 
@@ -29,7 +34,7 @@ import streamlit as st
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler
 from sklearn.impute import KNNImputer, SimpleImputer
-from sklearn.model_selection import TimeSeriesSplit, StratifiedKFold
+from sklearn.model_selection import TimeSeriesSplit, StratifiedKFold, train_test_split
 from sklearn.metrics import (
     f1_score, precision_score, recall_score,
     classification_report, confusion_matrix, roc_auc_score
@@ -46,7 +51,7 @@ warnings.filterwarnings("ignore")
 # 0. CONFIG
 # ═══════════════════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="SSL Dakar — Optimisé 85%+",
+    page_title="SSL Dakar — 4 classes AQI",
     page_icon="🚀",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -64,12 +69,10 @@ PALETTE = {
 }
 
 AQI_NAMES = {
-    0: ("Bon",           "#27AE60"),
-    1: ("Modéré",        "#F4C518"),
-    2: ("Mauvais (S)",   "#E8712A"),
-    3: ("Mauvais (I)",   "#E74C3C"),
-    4: ("Très Mauvais",  "#9B59B6"),
-    5: ("Extrême",       "#6C3483"),
+    0: ("Bon",          "#27AE60"),
+    1: ("Modéré",       "#F4C518"),
+    2: ("Mauvais",      "#E8712A"),
+    3: ("Très Mauvais", "#9B59B6"),
 }
 
 # Vues Co-Training optimisées (INDÉPENDANTES)
@@ -95,7 +98,7 @@ def load_and_prepare_data(label_ratio: float = 0.10) -> tuple[pd.DataFrame, str]
     """
     try:
         # Chercher fichier local d'abord
-        df = pd.read_csv("https://raw.githubusercontent.com/TitansO/Projet-SelfTtaining_CoTraining/main/air_quality_augmented.csv")
+        df = pd.read_csv("air_quality_augmented.csv")
         source = "📊 Fichier local (optimisé)"
     except:
         try:
@@ -195,7 +198,7 @@ def load_and_prepare_data(label_ratio: float = 0.10) -> tuple[pd.DataFrame, str]
     if "us_aqi" in df.columns and df["us_aqi"].notna().sum() > 100:
         # Binning stratifié basé sur distribution réelle
         aqi_values = df["us_aqi"].dropna()
-        percentiles = [0, 16, 33, 50, 66, 83, 100]
+        percentiles = [0, 25, 50, 75, 100]  # 4 classes (compromis testé)
         bins = [aqi_values.quantile(p/100) for p in percentiles]
         bins[0] = bins[0] - 1
         
@@ -204,7 +207,7 @@ def load_and_prepare_data(label_ratio: float = 0.10) -> tuple[pd.DataFrame, str]
     else:
         st.warning("⚠️ us_aqi non disponible, création d'un label composite")
         aqi_composite = df["air_quality_score"]
-        df["aqi_label"] = pd.qcut(aqi_composite, q=6, labels=False, 
+        df["aqi_label"] = pd.qcut(aqi_composite, q=4, labels=False, 
                                    duplicates='drop').astype(int)
     
     # Gérer les valeurs manquantes dans label
@@ -272,6 +275,18 @@ def prepare_splits(_df: pd.DataFrame):
     X_U    = sc(df_U)
     X_test = sc(df_test); y_test = df_test["aqi_label"].values
 
+    # ========== VALIDATION HONNÊTE (séparée du TEST) ==========
+    # Sert uniquement à piloter le SSL : early stopping et choix de la
+    # "meilleure" itération. Le TEST n'est jamais regardé pour cette décision,
+    # seulement pour le rapport final -> pas de fuite de données.
+    try:
+        X_L_fit, X_L_val, y_L_fit, y_L_val = train_test_split(
+            X_L, y_L, test_size=0.30, stratify=y_L, random_state=42)
+    except ValueError:
+        # Repli si une classe a trop peu d'échantillons pour stratifier
+        X_L_fit, X_L_val, y_L_fit, y_L_val = train_test_split(
+            X_L, y_L, test_size=0.30, random_state=42)
+
     # Indices des vues (filtrées)
     va_idx = [ALL_FEATURES.index(f) for f in VUE_A if f in ALL_FEATURES]
     vb_idx = [ALL_FEATURES.index(f) for f in VUE_B if f in ALL_FEATURES]
@@ -280,6 +295,8 @@ def prepare_splits(_df: pd.DataFrame):
         "df_full": df_train, "df_test": df_test,
         "df_L": df_L, "df_U": df_U,
         "X_L": X_L, "y_L": y_L,
+        "X_L_fit": X_L_fit, "y_L_fit": y_L_fit,
+        "X_L_val": X_L_val, "y_L_val": y_L_val,
         "X_U": X_U,
         "X_test": X_test, "y_test": y_test,
         "va_idx": va_idx, "vb_idx": vb_idx,
@@ -383,10 +400,16 @@ def _gamma_anneal(it, max_iter, gamma_start, gamma_end):
     return gamma_start + (gamma_end - gamma_start) * (it / max_iter)
 
 
-def run_self_training(X_L, y_L, X_U, X_test, y_test,
+def run_self_training(X_L, y_L, X_val, y_val, X_U, X_test, y_test,
                       gamma, max_iter, model_type="xgb",
                       patience=5, min_margin=0.15):
-    """Self-Training optimisé avec confidence weighting"""
+    """Self-Training optimisé avec confidence weighting.
+
+    X_val/y_val : ensemble de validation honnête (jamais vu en entraînement,
+    distinct de X_test/y_test). Sert à choisir la "meilleure" itération
+    (is_best) et à piloter le patience/early stopping. X_test/y_test ne
+    servent qu'à tracer la courbe à titre indicatif — jamais à décider.
+    """
     gamma_start = max(0.50, gamma - 0.10)
     X_Lc = X_L.copy()
     y_Lc = y_L.copy()
@@ -402,7 +425,11 @@ def run_self_training(X_L, y_L, X_U, X_test, y_test,
         clf = make_clf(model_type)
         clf.fit(X_Lc, y_Lc)
         
-        # Évaluation
+        # Évaluation honnête (VALIDATION) -> sert à piloter le SSL
+        y_pred_val = clf.predict(X_val)
+        f1_val = round(f1_score(y_val, y_pred_val, average="macro", zero_division=0), 4)
+
+        # Évaluation TEST -> indicative seulement, jamais utilisée pour choisir
         y_pred = clf.predict(X_test)
         f1_now = round(f1_score(y_test, y_pred, average="macro", zero_division=0), 4)
         
@@ -410,6 +437,7 @@ def run_self_training(X_L, y_L, X_U, X_test, y_test,
             "iteration": it,
             "n_L": len(X_Lc),
             "n_U": len(X_Uc),
+            "f1_val":      f1_val,
             "f1_macro":    f1_now,
             "f1_weighted": round(f1_score(y_test, y_pred, average="weighted", zero_division=0), 4),
             "precision":   round(precision_score(y_test, y_pred, average="macro", zero_division=0), 4),
@@ -420,9 +448,9 @@ def run_self_training(X_L, y_L, X_U, X_test, y_test,
             "is_best": False,
         }
         
-        # Early stopping
-        if f1_now > best_f1:
-            best_f1 = f1_now
+        # Early stopping piloté par la VALIDATION (pas le test)
+        if f1_val > best_f1:
+            best_f1 = f1_val
             best_clf = clf
             rec["is_best"] = True
             no_improve = 0
@@ -470,10 +498,14 @@ def run_self_training(X_L, y_L, X_U, X_test, y_test,
     return history
 
 
-def run_co_training(X_L, y_L, X_U, X_test, y_test,
+def run_co_training(X_L, y_L, X_val, y_val, X_U, X_test, y_test,
                     va_idx, vb_idx, gamma, max_iter, k_per_iter, model_type="xgb",
                     patience=5, min_margin=0.15):
-    """Co-Training optimisé avec better ensemble voting"""
+    """Co-Training optimisé avec better ensemble voting.
+
+    X_val/y_val : validation honnête (jamais utilisée en entraînement),
+    pilote l'early stopping. X_test/y_test : indicatif seulement.
+    """
     gamma_start = max(0.50, gamma - 0.10)
     
     X_LA = X_L[:, va_idx]
@@ -486,6 +518,9 @@ def run_co_training(X_L, y_L, X_U, X_test, y_test,
     
     X_tA = X_test[:, va_idx]
     X_tB = X_test[:, vb_idx]
+
+    X_valA = X_val[:, va_idx]
+    X_valB = X_val[:, vb_idx]
     
     history = []
     best_f1 = -1.
@@ -500,7 +535,13 @@ def run_co_training(X_L, y_L, X_U, X_test, y_test,
         cA.fit(X_LA, y_LA)
         cB.fit(X_LB, y_LB)
         
-        # Évaluation
+        # Évaluation honnête (VALIDATION) -> pilote le SSL
+        pA_val = cA.predict_proba(X_valA)
+        pB_val = cB.predict_proba(X_valB)
+        y_pred_val, _ = _ensemble_vote(cA, cB, pA_val, pB_val)
+        f1_val = round(f1_score(y_val, y_pred_val, average="macro", zero_division=0), 4)
+
+        # Évaluation TEST -> indicative seulement
         pA = cA.predict_proba(X_tA)
         pB = cB.predict_proba(X_tB)
         y_pred, _ = _ensemble_vote(cA, cB, pA, pB)
@@ -511,6 +552,7 @@ def run_co_training(X_L, y_L, X_U, X_test, y_test,
             "iteration": it,
             "n_L": len(X_LA),
             "n_U": len(X_UA),
+            "f1_val":      f1_val,
             "f1_macro":    f1_now,
             "f1_weighted": round(f1_score(y_test, y_pred, average="weighted", zero_division=0), 4),
             "precision":   round(precision_score(y_test, y_pred, average="macro", zero_division=0), 4),
@@ -522,8 +564,9 @@ def run_co_training(X_L, y_L, X_U, X_test, y_test,
             "is_best": False,
         }
         
-        if f1_now > best_f1:
-            best_f1 = f1_now
+        # Early stopping piloté par la VALIDATION (pas le test)
+        if f1_val > best_f1:
+            best_f1 = f1_val
             best_cA = cA
             best_cB = cB
             rec["is_best"] = True
@@ -633,9 +676,14 @@ def fig_ssl_progress(history, algo_name):
     _style(fig)
     
     axes[0].plot(df_h["iteration"], df_h["f1_macro"], color=color,
-                 linewidth=2.5, marker="o", markersize=6)
+                 linewidth=2.5, marker="o", markersize=6, label="F1 test (indicatif)")
+    if "f1_val" in df_h.columns:
+        axes[0].plot(df_h["iteration"], df_h["f1_val"], color=PALETTE["navy"],
+                     linewidth=2, linestyle="--", marker="s", markersize=5,
+                     label="F1 validation (pilotage)")
+        axes[0].legend(fontsize=8)
     axes[0].fill_between(df_h["iteration"], df_h["f1_macro"], alpha=0.15, color=color)
-    axes[0].set_title(f"{algo_name} — F1 macro", fontsize=12, fontweight="bold")
+    axes[0].set_title(f"{algo_name} — F1 par itération", fontsize=12, fontweight="bold")
     axes[0].set_xlabel("Itération")
     axes[0].set_ylabel("F1 macro")
     axes[0].grid(alpha=0.3)
@@ -702,7 +750,7 @@ def fig_compare(results_dict):
     ax.set_xticklabels(methods, fontsize=10, fontweight="bold")
     ax.set_ylim(0, 1.05)
     ax.set_ylabel("Score")
-    ax.set_title("Comparaison — OPTIMISÉ 85%+", fontsize=13, fontweight="bold")
+    ax.set_title("Comparaison des méthodes (F1 test du modèle retenu)", fontsize=13, fontweight="bold")
     ax.legend(fontsize=10)
     ax.grid(axis="y", alpha=0.3)
     
@@ -715,10 +763,10 @@ def fig_compare(results_dict):
 # ═══════════════════════════════════════════════════════════════════════════
 
 st.sidebar.markdown(
-    "<h2 style='color:#27AE60'>🚀 SSL Optimisé 85%+</h2>",
+    "<h2 style='color:#27AE60'>🚀 SSL — 4 classes AQI</h2>",
     unsafe_allow_html=True)
 
-st.sidebar.markdown("**✅ Améliorations v3 :**")
+st.sidebar.markdown("**✅ Améliorations v4 :**")
 st.sidebar.markdown(
     "🎯 Imputation multi-stratégie\n"
     "🔧 Feature engineering robuste\n"
@@ -726,7 +774,9 @@ st.sidebar.markdown(
     "📊 Co-Training indépendance\n"
     "🎲 Hyper-paramètres optimisés\n"
     "🛡️ Filtrage strict pseudo-labels\n"
-    "📌 % labellisé ajustable")
+    "📌 % labellisé ajustable\n"
+    "🏷️ 4 classes AQI (vs. 6 avant)\n"
+    "✅ Validation honnête (anti-fuite test)")
 st.sidebar.markdown("---")
 
 label_pct    = st.sidebar.slider("📌 % labellisé", 4, 20, 10, 1,
@@ -751,7 +801,9 @@ with st.spinner("⚙️ Préparation des splits…"):
     data = prepare_splits(df_raw)
 
 df_full  = data["df_full"]
-X_L, y_L = data["X_L"], data["y_L"]
+X_L, y_L = data["X_L"], data["y_L"]                   # pool complet labellisé (affichage)
+X_L_fit, y_L_fit = data["X_L_fit"], data["y_L_fit"]   # ~70% -> entraînement SSL
+X_L_val, y_L_val = data["X_L_val"], data["y_L_val"]   # ~30% -> pilotage honnête (jamais le test)
 X_U = data["X_U"]
 X_test, y_test = data["X_test"], data["y_test"]
 va_idx, vb_idx = data["va_idx"], data["vb_idx"]
@@ -761,7 +813,7 @@ ALL_FEATURES = data["ALL_FEATURES"]
 st.markdown(f"""
 <div style='background:linear-gradient(135deg,#0B1F3A 0%,#27AE60 100%);
             padding:28px 32px;border-radius:12px;margin-bottom:20px'>
-  <h1 style='color:white;margin:0'>🚀 SSL — Optimisé pour 85%+ Performance</h1>
+  <h1 style='color:white;margin:0'>🚀 SSL — Qualité de l'Air à Dakar (4 classes AQI)</h1>
   <p style='color:#B2D8D4;margin:8px 0 4px 0'>
     Self-Training & Co-Training · Features engineered · Confidence weighting
   </p>
@@ -805,12 +857,12 @@ with tab2:
         t0 = time.time()
         
         if algo_choice == "Self-Training":
-            history = run_self_training(X_L, y_L, X_U, X_test, y_test,
+            history = run_self_training(X_L_fit, y_L_fit, X_L_val, y_L_val, X_U, X_test, y_test,
                                        gamma=gamma, max_iter=max_iter, 
                                        model_type=model_map[model_type],
                                        patience=patience, min_margin=min_margin)
         else:
-            history = run_co_training(X_L, y_L, X_U, X_test, y_test,
+            history = run_co_training(X_L_fit, y_L_fit, X_L_val, y_L_val, X_U, X_test, y_test,
                                      va_idx=va_idx, vb_idx=vb_idx,
                                      gamma=gamma, max_iter=max_iter, k_per_iter=k_per_iter,
                                      model_type=model_map[model_type],
@@ -818,19 +870,9 @@ with tab2:
         
         elapsed = time.time() - t0
         final = history[-1]
-        best_f1 = final.get("best_f1", final["f1_macro"])
+        best_f1_val = final.get("best_f1", final.get("f1_val", final["f1_macro"]))
         
-        st.success(f"✅ Terminé en {elapsed:.1f}s | **F1 = {best_f1:.4f}**")
-        
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("F1 Final", f"{final['f1_macro']:.4f}")
-        k2.metric("Best F1", f"{best_f1:.4f}")
-        k3.metric("Précision", f"{final['precision']:.4f}")
-        k4.metric("Rappel", f"{final['recall']:.4f}")
-        
-        st.pyplot(fig_ssl_progress(history, algo_choice), use_container_width=True)
-        
-        # Prédictions finales
+        # Prédictions du modèle réellement retenu (choisi sur la VALIDATION)
         if algo_choice == "Self-Training":
             y_pred = final["clf"].predict(X_test)
         else:
@@ -839,14 +881,30 @@ with tab2:
             pB = cB.predict_proba(X_test[:, vb_idx])
             y_pred, _ = _ensemble_vote(cA, cB, pA, pB)
         
+        f1_test_final   = round(f1_score(y_test, y_pred, average="macro", zero_division=0), 4)
+        prec_test_final = round(precision_score(y_test, y_pred, average="macro", zero_division=0), 4)
+        rec_test_final  = round(recall_score(y_test, y_pred, average="macro", zero_division=0), 4)
+        
+        st.success(f"✅ Terminé en {elapsed:.1f}s | **F1 test (modèle retenu) = {f1_test_final:.4f}**")
+        
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("F1 Validation (pilotage)", f"{best_f1_val:.4f}")
+        k2.metric("F1 Test (final, honnête)", f"{f1_test_final:.4f}")
+        k3.metric("Précision (test)", f"{prec_test_final:.4f}")
+        k4.metric("Rappel (test)", f"{rec_test_final:.4f}")
+        
+        st.caption("ℹ️ La courbe « F1 validation » détermine quelle itération est retenue. "
+                   "La courbe « F1 test » n'est affichée qu'à titre indicatif et n'influence jamais ce choix.")
+        
+        st.pyplot(fig_ssl_progress(history, algo_choice), use_container_width=True)
         st.pyplot(fig_confusion(y_test, y_pred, f"{algo_choice}"), use_container_width=True)
         
         if "results" not in st.session_state:
             st.session_state["results"] = {}
         st.session_state["results"][algo_choice] = {
-            "f1_macro": final['f1_macro'],
-            "precision": final['precision'],
-            "recall": final['recall'],
+            "f1_macro": f1_test_final,
+            "precision": prec_test_final,
+            "recall": rec_test_final,
             "y_pred": y_pred,
             "model": model_type
         }
@@ -858,7 +916,7 @@ with tab3:
         st.warning("⚠️ Lancez une simulation d'abord")
     else:
         clf_base = make_clf(model_map[model_type])
-        clf_base.fit(X_L, y_L)
+        clf_base.fit(X_L_fit, y_L_fit)
         y_base = clf_base.predict(X_test)
         
         all_res = {
