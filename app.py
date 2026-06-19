@@ -11,6 +11,9 @@ Améliorations v2 :
 ✅ Co-Training avec meilleure indépendance des vues
 ✅ Ensemble voting amélioré
 ✅ Validation temporelle stricte + early stopping robuste
+
+Améliorations v3 :
+✅ % de labels connus (label_ratio) ajustable via slider sidebar (4% -> 20%)
 ============================================================
 """
 
@@ -81,8 +84,15 @@ VUE_B = ["dust", "aerosol_optical_depth", "uv_index", "sulphur_dioxide",
 # ═══════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(show_spinner=False)
-def load_and_prepare_data() -> tuple[pd.DataFrame, str]:
-    """Chargement + preprocessing robuste multi-stratégie"""
+def load_and_prepare_data(label_ratio: float = 0.10) -> tuple[pd.DataFrame, str]:
+    """Chargement + preprocessing robuste multi-stratégie
+
+    Parameters
+    ----------
+    label_ratio : float
+        Fraction d'observations à marquer comme "labellisées" (label_known=1),
+        stratifiée par classe AQI. Réglable depuis la sidebar (slider).
+    """
     try:
         # Chercher fichier local d'abord
         df = pd.read_csv("https://raw.githubusercontent.com/TitansO/Projet-SelfTtaining_CoTraining/main/air_quality_augmented.csv")
@@ -200,12 +210,10 @@ def load_and_prepare_data() -> tuple[pd.DataFrame, str]:
     # Gérer les valeurs manquantes dans label
     df["aqi_label"] = df["aqi_label"].fillna(df["aqi_label"].mode()[0])
 
-    # ========== LABELLISATION STRATIFIÉE OPTIMALE (3-5%) ==========
+    # ========== LABELLISATION STRATIFIÉE OPTIMALE (ratio ajustable) ==========
     np.random.seed(42)
     df["label_known"] = 0
-    
-    label_ratio = 0.04  # 4% de labellisé
-    
+
     # Stratifier par classe AQI
     for aqi_class in sorted(df["aqi_label"].unique()):
         mask = df["aqi_label"] == aqi_class
@@ -710,16 +718,19 @@ st.sidebar.markdown(
     "<h2 style='color:#27AE60'>🚀 SSL Optimisé 85%+</h2>",
     unsafe_allow_html=True)
 
-st.sidebar.markdown("**✅ Améliorations v2 :**")
+st.sidebar.markdown("**✅ Améliorations v3 :**")
 st.sidebar.markdown(
     "🎯 Imputation multi-stratégie\n"
     "🔧 Feature engineering robuste\n"
     "⚡ Confidence weighting\n"
     "📊 Co-Training indépendance\n"
     "🎲 Hyper-paramètres optimisés\n"
-    "🛡️ Filtrage strict pseudo-labels")
+    "🛡️ Filtrage strict pseudo-labels\n"
+    "📌 % labellisé ajustable")
 st.sidebar.markdown("---")
 
+label_pct    = st.sidebar.slider("📌 % labellisé", 4, 20, 10, 1,
+                                  help="Fraction des observations marquées comme labellisées (stratifiée par classe AQI)")
 algo_choice  = st.sidebar.selectbox("🔬 Algorithme", ["Self-Training", "Co-Training"])
 model_type   = st.sidebar.selectbox("🤖 Modèle", 
     ["XGBoost", "GradientBoosting", "RandomForest"] if HAS_XGBOOST 
@@ -734,7 +745,7 @@ model_map = {"XGBoost": "xgb", "GradientBoosting": "gb", "RandomForest": "rf"}
 
 # CHARGEMENT
 with st.spinner("⏳ Chargement & preprocessing avancé…"):
-    df_raw, data_source = load_and_prepare_data()
+    df_raw, data_source = load_and_prepare_data(label_ratio=label_pct / 100)
 
 with st.spinner("⚙️ Préparation des splits…"):
     data = prepare_splits(df_raw)
@@ -788,7 +799,7 @@ with tab1:
 
 with tab2:
     st.markdown(f"### 🤖 {algo_choice} — {model_type}")
-    st.info(f"γ={gamma} | Marge={min_margin} | Patience={patience} | Max_iter={max_iter}")
+    st.info(f"γ={gamma} | Marge={min_margin} | Patience={patience} | Max_iter={max_iter} | % labellisé={label_pct}%")
     
     if st.button(f"▶️ Lancer {algo_choice}", type="primary", use_container_width=True):
         t0 = time.time()
