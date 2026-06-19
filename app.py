@@ -85,7 +85,7 @@ def load_and_prepare_data() -> tuple[pd.DataFrame, str]:
     """Chargement + preprocessing robuste multi-stratégie"""
     try:
         # Chercher fichier local d'abord
-        df = pd.read_csv("/mnt/user-data/uploads/air_quality_historical__1_.csv")
+        df = pd.read_csv("https://raw.githubusercontent.com/TitansO/Projet-SelfTtaining_CoTraining/main/air_quality_historical.csv")
         source = "📊 Fichier local (optimisé)"
     except:
         try:
