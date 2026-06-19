@@ -288,15 +288,15 @@ def make_clf(model_type="xgb", seed=42):
     """Crée un classifieur optimisé"""
     if model_type == "xgb" and HAS_XGBOOST:
         return xgb.XGBClassifier(
-            n_estimators=250,
-            max_depth=8,
-            learning_rate=0.04,
+            n_estimators=200,
+            max_depth=7,
+            learning_rate=0.05,
             subsample=0.85,
             colsample_bytree=0.85,
             colsample_bylevel=0.85,
             reg_alpha=0.05,
-            reg_lambda=2.0,
-            min_child_weight=3,
+            reg_lambda=1.5,
+            min_child_weight=2,
             use_label_encoder=False,
             eval_metric='mlogloss',
             random_state=seed,
@@ -305,21 +305,19 @@ def make_clf(model_type="xgb", seed=42):
         )
     elif model_type == "gb":
         return GradientBoostingClassifier(
-            n_estimators=250,
-            max_depth=8,
-            learning_rate=0.04,
+            n_estimators=200,
+            max_depth=7,
+            learning_rate=0.05,
             subsample=0.85,
             max_features='sqrt',
             min_samples_leaf=4,
             min_samples_split=8,
             random_state=seed,
-            validation_fraction=0.1,
-            n_iter_no_change=10,
         )
     else:  # RF
         return RandomForestClassifier(
-            n_estimators=250,
-            max_depth=14,
+            n_estimators=200,
+            max_depth=12,
             min_samples_leaf=4,
             min_samples_split=8,
             max_features='sqrt',
@@ -333,6 +331,26 @@ def make_clf(model_type="xgb", seed=42):
 # ═══════════════════════════════════════════════════════════════════════════
 # 4. ALGORITHMES SSL OPTIMISÉS
 # ═══════════════════════════════════════════════════════════════════════════
+
+def _ensemble_vote(cA, cB, pA, pB):
+    """Vote pondéré amélioré"""
+    cls = np.union1d(cA.classes_, cB.classes_)
+    
+    def _align(c, p):
+        out = np.zeros((p.shape[0], len(cls)))
+        for j, cl in enumerate(cls):
+            if cl in c.classes_:
+                idx = np.where(c.classes_ == cl)[0][0]
+                out[:, j] = p[:, idx]
+        return out
+    
+    pA_align = _align(cA, pA)
+    pB_align = _align(cB, pB)
+    
+    # Vote pondéré avec poids dynamiques
+    ensemble_proba = 0.55 * pA_align + 0.45 * pB_align
+    return cls[ensemble_proba.argmax(axis=1)], ensemble_proba
+
 
 def _margin_filter(proba, gamma, min_margin=0.15):
     """Filtre confiance + marge"""
@@ -466,25 +484,6 @@ def run_co_training(X_L, y_L, X_U, X_test, y_test,
     best_cA = None
     best_cB = None
     no_improve = 0
-
-    def _ensemble_vote(cA, cB, pA, pB):
-        """Vote pondéré amélioré"""
-        cls = np.union1d(cA.classes_, cB.classes_)
-        
-        def _align(c, p):
-            out = np.zeros((p.shape[0], len(cls)))
-            for j, cl in enumerate(cls):
-                if cl in c.classes_:
-                    idx = np.where(c.classes_ == cl)[0][0]
-                    out[:, j] = p[:, idx]
-            return out
-        
-        pA_align = _align(cA, pA)
-        pB_align = _align(cB, pB)
-        
-        # Vote pondéré avec poids dynamiques
-        ensemble_proba = 0.55 * pA_align + 0.45 * pB_align
-        return cls[ensemble_proba.argmax(axis=1)], ensemble_proba
 
     for it in range(max_iter + 1):
         cA = make_clf(model_type, 42 + it)
